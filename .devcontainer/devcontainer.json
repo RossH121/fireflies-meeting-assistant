@@ -27,6 +27,11 @@
       "onAutoForward": "openPreview"
     }
   },
+  "remoteEnv": {
+    "OPENAI_API_KEY": "${localEnv:OPENAI_API_KEY}",
+    "GMAIL_USER": "${localEnv:GMAIL_USER}",
+    "GMAIL_PASSWORD": "${localEnv:GMAIL_PASSWORD}"
+  }, 
   "forwardPorts": [
     8501
   ]

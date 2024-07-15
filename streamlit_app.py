@@ -5,15 +5,23 @@ import datetime
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 import smtplib
+import os
 from openai import OpenAI
 
-# Initialize OpenAI client with API key from Streamlit secrets
-OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
-client = OpenAI(api_key=OPENAI_API_KEY)
-
-# Email configuration from Streamlit secrets
-GMAIL_USER = st.secrets["GMAIL_USER"]
+# Fetch secrets
 GMAIL_PASSWORD = st.secrets["GMAIL_PASSWORD"]
+GMAIL_USER = st.secrets["GMAIL_USER"]
+OPENAI_API_KEY = st.secrets["OPENAI_API_KEY"]
+
+# Ensure the API key is loaded
+if not OPENAI_API_KEY:
+    st.error("OpenAI API key is not set in the environment variables.")
+else:
+    client = OpenAI(api_key=OPENAI_API_KEY)
+
+# Email configuration from environment variables
+GMAIL_USER = os.getenv("GMAIL_USER", "ross@aileadershiplab.com")
+GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "frrgcwgk dehuxygg")
 
 def fetch_transcripts(api_key):
     url = 'https://api.fireflies.ai/graphql'
@@ -54,64 +62,93 @@ def gpt4o_json_prompt(transcript_content, prompt_type):
     }
 
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are an AI assistant specialized in analyzing meeting transcripts for accounting professionals. You only reply with JSON."},
-                {"role": "user", "content": f"""{prompts[prompt_type]}
+        with st.spinner('Analyzing transcript...'):
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are an AI assistant specialized in analyzing meeting transcripts for accounting professionals. You must only reply with JSON. [no prose]"},
+                    {"role": "user", "content": f"""{prompts[prompt_type]}
 
-                Provide the summary in the following JSON structure:
-                {{
-                    "summary": "A concise summary of the requested information",
-                    "key_points": ["point1", "point2", "point3"],
-                    "details": [
-                        {{
-                            "topic": "Specific topic or item",
-                            "description": "Detailed description",
-                            "relevance": "Why this is important for the accountant"
-                        }},
-                        ...
-                    ],
-                    "follow_up_suggestions": ["suggestion1", "suggestion2"]
-                }}
+                    Provide the summary in the following JSON structure:
+                    {{
+                        "summary": "A concise summary of the requested information",
+                        "key_points": ["point1", "point2", "point3"],
+                        "details": [
+                            {{
+                                "topic": "Specific topic or item",
+                                "description": "Detailed description",
+                                "relevance": "Why this is important for the accountant"
+                            }},
+                            ...
+                        ],
+                        "follow_up_suggestions": ["suggestion1", "suggestion2"]
+                    }}
 
-                Transcript:
-                {transcript_content}"""}
-            ],
-            temperature=0.7,
-            max_tokens=2500,
-            response_format={"type": "json_object"}
-        )
-        return json.loads(response.choices[0].message.content)
+                    Transcript:
+                    {transcript_content}
+
+                    [Output only JSON]"""}
+                ],
+                temperature=0.7,
+                max_tokens=3000,
+                response_format={"type": "json_object"},
+                logit_bias={123: 100}  # Increase likelihood of `{` to start the response
+            )
+        
+        # Check if the response content is valid JSON
+        try:
+            return json.loads(response.choices[0].message.content)
+        except json.JSONDecodeError as json_error:
+            st.error(f"Error decoding JSON: {json_error}")
+            st.error(f"Raw response: {response.choices[0].message.content}")
+            return None
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"An error occurred while analyzing the transcript: {e}")
         return None
 
 def generate_follow_up_email(transcript_content):
     try:
-        response = client.chat.completions.create(
-            model="gpt-4o",
-            messages=[
-                {"role": "system", "content": "You are an AI assistant helping an accountant draft a follow-up email after a client meeting. The email should sound authentic, professional, and as if it's coming directly from the accountant who organized the meeting. Format the email in HTML with appropriate paragraph breaks and styling."},
-                {"role": "user", "content": f"""Based on the following meeting transcript, create a follow-up email to the client. The email should:
+        with st.spinner('Generating follow-up email...'):
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are an AI assistant helping an accountant draft a follow-up email after a client meeting. The email should sound authentic, professional, and as if it's coming directly from the accountant who organized the meeting. You must only reply with JSON containing the email content."},
+                    {"role": "user", "content": f"""Based on the following meeting transcript, create a follow-up email to the client. The email should:
 
-                1. Briefly summarize the key points discussed in the meeting
-                2. Confirm any responsibilities or action items for the client
-                3. Mention any deadlines discussed or set reasonable deadlines if none were specified
-                4. Sound authentic and professional, as if written by the accountant who organized the meeting
-                5. End with a polite closing and offer for further assistance
+                    1. Briefly summarize the key points discussed in the meeting
+                    2. Confirm any responsibilities or action items for the client
+                    3. Mention any deadlines discussed or set reasonable deadlines if none were specified
+                    4. Sound authentic and professional, as if written by the accountant who organized the meeting
+                    5. End with a polite closing and offer for further assistance
 
-                Please format the email with appropriate HTML tags, including <p> for paragraphs, <br> for line breaks, and any other relevant HTML formatting.
+                    Format the email with appropriate HTML tags, including <p> for paragraphs, <br> for line breaks, and any other relevant HTML formatting.
 
-                Transcript:
-                {transcript_content}"""}
-            ],
-            temperature=0.7,
-            max_tokens=1000
-        )
-        return response.choices[0].message.content
+                    Provide the email content in the following JSON structure:
+                    {{
+                        "subject": "Meeting Follow-up: [Brief Description]",
+                        "body": "HTML formatted email content"
+                    }}
+
+                    Transcript:
+                    {transcript_content}
+
+                    [Output only JSON]"""}
+                ],
+                temperature=0.7,
+                max_tokens=2000,
+                response_format={"type": "json_object"},
+                logit_bias={123: 100}  # Increase likelihood of `{` to start the response
+            )
+        
+        # Check if the response content is valid JSON
+        try:
+            return json.loads(response.choices[0].message.content)
+        except json.JSONDecodeError as json_error:
+            st.error(f"Error decoding JSON for follow-up email: {json_error}")
+            st.error(f"Raw response: {response.choices[0].message.content}")
+            return None
     except Exception as e:
-        st.error(f"An error occurred: {e}")
+        st.error(f"An error occurred while generating the follow-up email: {e}")
         return None
 
 def format_analysis_to_html(analysis_type, gpt4o_response, follow_up_email):
@@ -249,33 +286,47 @@ def send_email(recipient_email, subject, html_content):
 # Streamlit UI
 st.title('Fireflies Meeting Prototype')
 
-# Prompt user for Fireflies API Key
-api_key = st.text_input('Fireflies API Key', type='password')
-email = st.text_input('Email Address')
+# User inputs
+fireflies_api_key = st.text_input('Fireflies API Key', type='password')
+email = st.text_input('Email Address', value=GMAIL_USER)
 auto_email = st.checkbox('Auto-email analysis')
+
+# Fetch transcripts button
 refresh_button = st.button('Refresh Transcripts')
 
-transcript_options = []
-transcript_titles = []
+# Use session state to store transcripts and selected transcript ID
+if 'transcripts' not in st.session_state:
+    st.session_state.transcripts = []
+if 'selected_transcript_id' not in st.session_state:
+    st.session_state.selected_transcript_id = None
 
-if api_key:
-    if refresh_button:
+if fireflies_api_key and refresh_button:
+    with st.spinner('Refreshing transcripts...'):
         try:
-            transcripts = fetch_transcripts(api_key)
-            transcript_options = [t['id'] for t in transcripts]
-            transcript_titles = [t['title'] for t in transcripts]
+            st.session_state.transcripts = fetch_transcripts(fireflies_api_key)
             st.success("Transcripts refreshed successfully.")
         except Exception as e:
             st.error(f"Error refreshing transcripts: {e}")
 
-transcript_id = st.selectbox('Select Transcript', options=transcript_options, format_func=lambda x: transcript_titles[transcript_options.index(x)] if x in transcript_options else "")
+if st.session_state.transcripts:
+    transcript_options = [t['id'] for t in st.session_state.transcripts]
+    transcript_titles = [t['title'] for t in st.session_state.transcripts]
 
-if transcript_id:
-    selected_transcript = next(t for t in transcripts if t['id'] == transcript_id)
+    transcript_id = st.selectbox(
+        'Select Transcript',
+        options=transcript_options,
+        format_func=lambda x: transcript_titles[transcript_options.index(x)] if x in transcript_options else ""
+    )
+
+    if transcript_id:
+        st.session_state.selected_transcript_id = transcript_id
+
+if st.session_state.selected_transcript_id:
+    selected_transcript = next(
+        t for t in st.session_state.transcripts if t['id'] == st.session_state.selected_transcript_id
+    )
     transcript_content = get_transcript_content(selected_transcript)
     st.text_area('Transcript', transcript_content, height=200, disabled=True)
-
-gpt4o_output = st.empty()
 
 analyze_buttons = {
     'financial': st.button('Financial Analysis'),
@@ -287,7 +338,10 @@ analyze_buttons = {
 }
 
 def handle_analysis(prompt_type):
-    if selected_transcript:
+    if st.session_state.selected_transcript_id:
+        selected_transcript = next(
+            t for t in st.session_state.transcripts if t['id'] == st.session_state.selected_transcript_id
+        )
         transcript_content = get_transcript_content(selected_transcript)
         st.write(f"Analyzing with GPT-4o: {prompt_type.replace('_', ' ').title()}...")
         gpt4o_response = gpt4o_json_prompt(transcript_content, prompt_type)
@@ -308,24 +362,26 @@ def handle_analysis(prompt_type):
             for suggestion in gpt4o_response['follow_up_suggestions']:
                 st.write(f"- {suggestion}")
             st.write("### Follow-up Email")
-            st.markdown(follow_up_email, unsafe_allow_html=True)
+            st.markdown(follow_up_email['body'], unsafe_allow_html=True)
 
             if auto_email and email:
-                html_content = format_analysis_to_html(prompt_type, gpt4o_response, follow_up_email)
+                with st.spinner('Sending email...'):
+                    html_content = format_analysis_to_html(prompt_type, gpt4o_response, follow_up_email['body'])
 
-                # Create a set of unique speakers
-                speakers = set(sentence['speaker_name'] for sentence in selected_transcript['sentences'])
+                    # Create a set of unique speakers
+                    speakers = set(sentence['speaker_name'] for sentence in selected_transcript['sentences'])
 
-                # Format the date
-                date = datetime.datetime.fromtimestamp(selected_transcript['date'] / 1000).strftime('%Y-%m-%d')
+                    # Format the date
+                    date = datetime.datetime.fromtimestamp(selected_transcript['date'] / 1000).strftime('%Y-%m-%d')
 
-                # Create the email subject
-                subject = f"Meeting Analysis: {prompt_type.replace('_', ' ').title()} - {selected_transcript['title']} - {date} - Speakers: {', '.join(speakers)}"
+                    # Create the email subject
+                    subject = f"Meeting Analysis: {prompt_type.replace('_', ' ').title()} - {selected_transcript['title']} - {date} - Speakers: {', '.join(speakers)}"
 
-                send_email(email, subject, html_content)
+                    send_email(email, subject, html_content)
         else:
             st.error("Failed to generate analysis or follow-up email. Please check the error messages above and try again.")
 
+# Trigger analysis based on button clicks
 if analyze_buttons['financial']:
     handle_analysis('financial')
 if analyze_buttons['action_items']:
@@ -338,3 +394,7 @@ if analyze_buttons['client_concerns']:
     handle_analysis('client_concerns')
 if analyze_buttons['compliance']:
     handle_analysis('compliance')
+
+# Add a footer
+st.markdown("---")
+st.markdown("Powered by Fireflies.ai and OpenAI GPT-4o")
