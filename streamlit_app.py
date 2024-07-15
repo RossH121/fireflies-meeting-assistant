@@ -19,10 +19,6 @@ if not OPENAI_API_KEY:
 else:
     client = OpenAI(api_key=OPENAI_API_KEY)
 
-# Email configuration from environment variables
-GMAIL_USER = os.getenv("GMAIL_USER", "ross@aileadershiplab.com")
-GMAIL_PASSWORD = os.getenv("GMAIL_PASSWORD", "frrgcwgk dehuxygg")
-
 def fetch_transcripts(api_key):
     url = 'https://api.fireflies.ai/graphql'
     headers = {
@@ -288,7 +284,8 @@ st.title('Fireflies Meeting Prototype')
 
 # User inputs
 fireflies_api_key = st.text_input('Fireflies API Key', type='password')
-email = st.text_input('Email Address', value=GMAIL_USER)
+email = st.text_input('Email Address')
+
 auto_email = st.checkbox('Auto-email analysis')
 
 # Fetch transcripts button
